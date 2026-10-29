@@ -1,226 +1,325 @@
-# Employee Attendance Dashboard
-
-A full-stack HR attendance system: **React.js** (frontend) + **FastAPI** (backend) + **SQLite** (database).
-
-Admins upload an Excel file of daily attendance; the system automatically creates new
-employees, inserts/updates attendance records without duplicates, and the dashboard
-(summary cards, charts, searchable table, employee history) refreshes instantly.
-
----
-
-## 1. Project Structure
-
-```
-attendance-dashboard/
+# Employee Attendance Dashboard & ODC Tracker
+ 
+A full-stack web application for managing employee attendance and ODC (Office/Onsite/Work-location) tracking. The application allows users to import Excel data, monitor employee attendance, view analytics, track working hours, and manage employee remarks.
+ 
+## Features
+ 
+### 1. Attendance Dashboard
+- Import employee attendance data from Excel files.
+- View attendance summary cards and status distribution.
+- Search and filter employee records.
+- View employee-wise attendance history.
+- Track Present, Absent, WFH, Leave, and other supported statuses.
+- View check-in and check-out timings.
+- Calculate working hours when valid timings are available.
+- Add, edit, and delete attendance records.
+- View Excel upload history and import errors.
+ 
+### 2. Attendance Analytics
+- View attendance graphs and reports.
+- Filter records by employee, status, month, and year where supported.
+- Analyze daily, monthly, and yearly attendance trends.
+- Review employee-wise and team-wide working-hours summaries.
+- Update analytics automatically when filters change.
+ 
+### 3. ODC Tracker
+- Import ODC Tracker information from Excel workbooks.
+- View employee details and ODC log records.
+- Review ODC summaries and upload history.
+- Search and filter available ODC records.
+- Edit and save employee remarks.
+- Store ODC records separately from attendance data.
+ 
+### 4. Excel Data Processing
+- Validate Excel files and required fields.
+- Process employee IDs, names, dates, statuses, and timings.
+- Identify duplicate employee/date attendance records.
+- Update matching attendance records during repeated imports.
+- Report invalid rows and import warnings.
+ 
+## Technology Stack
+ 
+| Component | Technologies |
+|---|---|
+| Frontend | React.js, Vite |
+| Routing | React Router |
+| Charts | Recharts |
+| Icons | Lucide React |
+| API Requests | Axios |
+| Backend | Python, FastAPI |
+| Database | SQLite |
+| ORM | SQLAlchemy |
+| Data Processing | Pandas, OpenPyXL |
+| API Documentation | Swagger UI |
+ 
+## Project Structure
+ 
+```text
+dashboard-attendance-main/
+├── README.md
+├── ODC_TRACKER_IMPLEMENTATION_PROMPT.md
 ├── backend/
 │   ├── app/
 │   │   ├── __init__.py
-│   │   ├── main.py              # FastAPI app + all API routes
-│   │   ├── models.py            # SQLAlchemy models (Employee, Attendance, UploadLog)
-│   │   ├── schemas.py           # Pydantic request/response schemas
-│   │   ├── database.py          # SQLite engine/session setup
-│   │   └── excel_processor.py   # Excel validation + upsert logic
+│   │   ├── main.py
+│   │   ├── database.py
+│   │   ├── models.py
+│   │   ├── schemas.py
+│   │   ├── excel_processor.py
+│   │   ├── analytics.py
+│   │   └── odc_tracker.py
 │   ├── requirements.txt
-│   ├── generate_sample_data.py  # creates sample_attendance.xlsx for testing
+│   ├── generate_sample_data.py
+│   ├── ODC_Tracker_Import_Template.xlsx
+│   ├── Sample_Attendance_Dashboard_Data.xlsx
 │   └── sample_attendance.xlsx
 ├── frontend/
-│   ├── src/
-│   │   ├── components/
-│   │   │   ├── Sidebar.jsx
-│   │   │   ├── Topbar.jsx
-│   │   │   ├── Dashboard.jsx
-│   │   │   ├── SummaryCards.jsx
-│   │   │   ├── AttendanceTrendChart.jsx
-│   │   │   ├── StatusPieChart.jsx
-│   │   │   ├── EmployeeTable.jsx
-│   │   │   ├── EmployeeDetail.jsx
-│   │   │   ├── UploadModal.jsx
-│   │   │   └── StatusBadge.jsx
-│   │   ├── api.js               # axios API client
-│   │   ├── App.jsx
-│   │   ├── main.jsx
-│   │   └── index.css            # full dashboard styling
 │   ├── index.html
 │   ├── package.json
-│   └── vite.config.js
-└── README.md   (this file)
+│   ├── package-lock.json
+│   ├── vite.config.js
+│   └── src/
+│       ├── App.jsx
+│       ├── api.js
+│       ├── main.jsx
+│       ├── index.css
+│       ├── timing.js
+│       └── components/
+│           ├── AnalyticsPanel.jsx
+│           ├── AttendanceFormModal.jsx
+│           ├── AttendanceTrendChart.jsx
+│           ├── ConfirmDialog.jsx
+│           ├── Dashboard.jsx
+│           ├── EmployeeDetail.jsx
+│           ├── EmployeeFormModal.jsx
+│           ├── EmployeeTable.jsx
+│           ├── ODCTracker.css
+│           ├── ODCTracker.jsx
+│           ├── ResetDataButton.jsx
+│           ├── Sidebar.jsx
+│           ├── StatusBadge.jsx
+│           ├── StatusPieChart.jsx
+│           ├── SummaryCards.jsx
+│           ├── Topbar.jsx
+│           └── UploadModal.jsx
+└── uploads/
 ```
-
----
-
-## 2. Database Design
-
-**Employees**
-| Column | Type | Notes |
-|---|---|---|
-| emp_id | String | **Primary key** — the unique identifier from "Emp No" |
-| name | String | Employee name (kept in sync if it changes on re-upload) |
-| created_at / updated_at | DateTime | audit timestamps |
-
-**Attendance**
-| Column | Type | Notes |
-|---|---|---|
-| id | Integer | Primary key (autoincrement) |
-| emp_id | String | Foreign key → employees.emp_id |
-| date | Date | Attendance date |
-| status | String | Present / Absent / WFH / Leave / Half Day |
-| check_in / check_out | Time | Nullable |
-| comments | Text | Nullable |
-| **UNIQUE(emp_id, date)** | | Guarantees one record per employee per day |
-
-**UploadLog** — records every upload's filename, row counts, and errors (for audit/history).
-
-### Duplicate-safe upload logic
-On every Excel upload the backend:
-1. Validates required columns and each row (date, status, emp id).
-2. For each valid row: inserts the employee **only if `emp_id` doesn't already exist**;
-   otherwise it is left untouched (name refreshed if it changed).
-3. For attendance: if `(emp_id, date)` already exists, the existing row is **updated**
-   (status/check-in/check-out/comments); if not, a **new row is inserted**. Nothing is
-   ever duplicated, and history for other dates is never touched — so uploading the same
-   file (or overlapping date ranges) repeatedly is always safe.
-4. Bad rows are collected as errors and skipped without failing the rest of the upload.
-
----
-
-## 3. Prerequisites
-
-- Python 3.10+
-- Node.js 18+ and npm
-
----
-
-## 4. Backend Setup
-
+ 
+*The structure above describes the main project files. Local upload files and generated files may vary.*
+ 
+## Prerequisites
+ 
+Install the following before running the application:
+ 
+- Python 3.10 or later
+- Node.js 18 or later
+- npm
+- Visual Studio Code or another code editor
+ 
+Check your installed versions:
+ 
 ```bash
+python --version
+node --version
+npm --version
+```
+ 
+## Installation and Setup
+ 
+Run the backend and frontend in separate terminals.
+ 
+### Step 1: Clone the Repository
+ 
+If you are downloading the project from GitHub:
+ 
+```bash
+git clone <YOUR_GITHUB_REPOSITORY_URL>
+cd dashboard-attendance-main
+```
+ 
+Replace the placeholder with your actual repository URL.
+ 
+If the project is already extracted on your computer, simply open the project folder in VS Code.
+ 
+### Step 2: Set Up the Backend
+ 
+Open a terminal in the project root and run:
+ 
+**Windows PowerShell:**
+ 
+```powershell
 cd backend
 python -m venv venv
-source venv/bin/activate        # Windows: venv\Scripts\activate
-
+.\venv\Scripts\Activate.ps1
 pip install -r requirements.txt
-
-# (optional) generate a sample Excel file to test with
-python generate_sample_data.py
-
-# run the API server
-uvicorn app.main:app --reload --port 8000
+python -m uvicorn app.main:app --reload --port 8000
 ```
-
-The API will be live at **http://localhost:8000** (interactive docs at
-`http://localhost:8000/docs`). A SQLite file `attendance.db` is created automatically
-on first run — no manual migration step needed.
-
-### Excel format expected
-
-| Emp No | Employee Name | Date | Attendance Status | CheckIn | CheckOut | Comments |
-|---|---|---|---|---|---|---|
-| EMP001 | Aarav Sharma | 2026-09-23 | Present | 09:15 | 18:10 | |
-| EMP002 | Priya Nair | 2026-09-23 | WFH | 09:30 | 18:00 | |
-
-- Column headers are matched case-insensitively and tolerate common variants
-  (e.g. "Emp No" / "EmpNo" / "Employee ID").
-- `Attendance Status` accepts: `Present`, `Absent`, `WFH`, `Leave`, `Half Day`
-  (and common abbreviations like `P`, `A`, `HD`).
-- `Date` accepts most common formats (`YYYY-MM-DD`, `DD/MM/YYYY`, etc).
-
----
-
-## 5. Frontend Setup
-
+ 
+If you use Windows Command Prompt, activate the environment with:
+ 
+```bat
+venv\Scripts\activate.bat
+```
+ 
+**macOS/Linux:**
+ 
+```bash
+cd backend
+python3 -m venv venv
+source venv/bin/activate
+pip install -r requirements.txt
+python -m uvicorn app.main:app --reload --port 8000
+```
+ 
+The backend runs at:
+ 
+- API: http://localhost:8000
+- Swagger API documentation: http://localhost:8000/docs
+- ReDoc documentation: http://localhost:8000/redoc
+- Health check: http://localhost:8000/api/health
+ 
+Keep the backend terminal running.
+ 
+### Step 3: Set Up the Frontend
+ 
+Open a second terminal in the project root:
+ 
 ```bash
 cd frontend
 npm install
 npm run dev
 ```
-
-Open **http://localhost:5173**. The Vite dev server proxies `/api/*` requests to the
-backend at `http://localhost:8000` (see `vite.config.js`), so both servers must be
-running at the same time during development.
-
-### Production build
-
+ 
+Open the local URL printed by Vite, usually:
+ 
+http://localhost:5173
+ 
+Keep the frontend terminal running while using the application.
+ 
+### Step 4: Build the Frontend
+ 
+To create a production build:
+ 
 ```bash
+cd frontend
 npm run build
 ```
-
-This outputs static files to `frontend/dist/` which you can serve with any static
-file host (nginx, `serve`, etc.) — just point it at your deployed FastAPI backend
-URL by adjusting the proxy / API base URL in `src/api.js`.
-
----
-
-## 6. Running Both Together (quick start)
-
-```bash
-# terminal 1
-cd backend && source venv/bin/activate && uvicorn app.main:app --reload --port 8000
-
-# terminal 2
-cd frontend && npm run dev
-```
-
-Then visit **http://localhost:5173**, click **Upload Excel**, and select
-`backend/sample_attendance.xlsx` (or your own file) to see the dashboard populate.
-
----
-
-## 7. Key Features
-
-- **Sidebar navigation** + sticky topbar with live date and quick upload access.
-- **Summary cards**: Total Employees, Present, WFH, Absent, On Leave — for the
-  selected date.
-- **Charts** (Recharts): 14-day attendance trend line chart + status breakdown pie chart.
-- **Searchable, filterable employee table** with color-coded status badges, per-employee
-  present/absent/WFH counts, and a date picker.
-- **Employee detail page** (`/employees/:empId`) showing full attendance history.
-- **Upload modal**: drag-and-drop or click-to-browse, upload progress bar, validation
-  errors surfaced per-row, and a preview of inserted vs. updated records after each
-  upload.
-- **Dynamic refresh**: after a successful upload, the dashboard and employee table
-  refetch automatically — no manual page reload needed.
-- **Backend validation & safety**: file type/size checks, per-row error collection
-  (bad dates/status/missing IDs don't fail the whole batch), and DB-level unique
-  constraints as a second line of defense against duplicates.
-
----
-
-## 8. API Reference
-
-| Method | Endpoint | Description |
+ 
+The generated build is normally available in `frontend/dist/`.
+ 
+## Importing Attendance Excel Data
+ 
+1. Start the backend and frontend.
+2. Open the application in your browser.
+3. Navigate to the Attendance Dashboard.
+4. Select the Excel upload option.
+5. Choose the attendance workbook.
+6. Upload the file and review the import result.
+7. Verify the dashboard cards, employee records, and charts.
+ 
+### Typical Attendance Columns
+ 
+| Column | Example |
+|---|---|
+| Employee ID | EMP001 |
+| Employee Name | Aarav Sharma |
+| Date | 2026-09-23 |
+| Attendance Status | Present |
+| Check-in Time | 09:15 |
+| Check-out Time | 18:10 |
+| Comments | Worked from office |
+ 
+Use the supplied sample workbook as the primary reference for supported column names and formats.
+ 
+Common statuses include Present, Absent, WFH, Leave, and Half Day, depending on the importer configuration.
+ 
+### Duplicate Records
+ 
+Attendance records are identified using employee ID and attendance date. Re-importing an existing employee/date record is intended to update the matching record rather than create a duplicate. Records for other dates are retained.
+ 
+Invalid rows may be skipped and reported in the upload response.
+ 
+## Using the ODC Tracker
+ 
+1. Open the ODC Tracker from the application sidebar.
+2. Select the ODC Excel workbook.
+3. Upload the workbook.
+4. Review the ODC summary, logs, and upload history.
+5. Search and filter records using the available options.
+6. Edit remarks where the application provides an editable field.
+7. Verify that changes are saved successfully.
+ 
+Use `backend/ODC_Tracker_Import_Template.xlsx` as a reference for the expected workbook format.
+ 
+ODC data is managed separately from attendance data.
+ 
+## Attendance and Working-Hours Analytics
+ 
+The analytics module provides attendance graph data, filtered daily records, and working-hours summaries.
+ 
+Available analytics depend on the records imported into the database and the filters supported by the application.
+ 
+Working hours can only be calculated when valid check-in and check-out times are available. Missing or invalid times should be checked against the original Excel workbook.
+ 
+## API Endpoints
+ 
+The FastAPI backend provides REST APIs for attendance management, analytics, and ODC tracking.
+ 
+### General and Attendance APIs
+ 
+| Method | Endpoint | Purpose |
 |---|---|---|
-| POST | `/api/upload` | Upload an Excel file; returns counts + preview + errors |
-| GET | `/api/uploads/history` | Recent upload audit log |
-| GET | `/api/summary?date=YYYY-MM-DD` | Dashboard summary counts |
-| GET | `/api/chart-data?days=14` | Daily status counts for the trend chart |
-| GET | `/api/status-distribution?date=` | Status breakdown for the pie chart |
-| GET | `/api/employees?search=&date=&status=` | Employee list with aggregate stats |
-| GET | `/api/employees/{emp_id}` | Single employee + full attendance history |
-| GET | `/api/attendance?date=&emp_id=&status=` | Raw attendance rows (filterable) |
-
-Full interactive documentation is auto-generated by FastAPI at `/docs`.
-
----
-
-## 9. Notes for Production Use
-
-- Set `allow_origins` in `backend/app/main.py`'s CORS middleware to your real frontend
-  domain instead of `"*"`.
-- Consider adding authentication (e.g. JWT) around the upload endpoint since it writes
-  to the database — this starter ships without auth so you can wire in your own.
-- SQLite is great for small/medium HR teams; for larger organizations swap the
-  connection string in `backend/app/database.py` for PostgreSQL/MySQL (SQLAlchemy
-  makes this a one-line change plus a driver install).
-
-## ODC Tracker (separate module)
-
-The ODC Tracker is available from the left sidebar at **ODC Tracker**. It is an additive module and stores its data in separate SQLite tables: `odc_employees`, `odc_logs`, and `odc_uploads`; it does not write to or reset the attendance tables.
-
-### Upload workbook
-1. Start the backend and frontend using the normal instructions above.
-2. Open **ODC Tracker** and choose the Excel workbook.
-3. Upload the workbook containing the roster/output table and ODC log/input table. The importer maps common header variants based on column names.
-4. Review **Employee reconciliation**, **ODC logs**, and **Upload history**. Use search, location/project filters, and date filters as needed.
-
-The importer normalizes employee IDs, stores distinct log-date identities, and updates repeated log identities on later uploads. Invalid/missing dates are skipped with warnings; `#N/A` worked-from-ODC values are left unknown rather than converted to zero. Check upload warnings after import, especially if your workbook uses unusual header names.
-
-A reusable implementation prompt is included in `ODC_TRACKER_IMPLEMENTATION_PROMPT.md`.
+| GET | `/api/health` | Check backend status |
+| POST | `/api/upload` | Upload attendance Excel data |
+| GET | `/api/uploads/history` | View attendance upload history |
+| GET | `/api/summary` | Retrieve dashboard summary |
+| GET | `/api/chart-data` | Retrieve attendance chart data |
+| GET | `/api/status-distribution` | Retrieve status distribution |
+| GET | `/api/employees` | List or filter employees |
+| GET | `/api/employees/{emp_id}` | Retrieve employee details |
+| POST | `/api/employees` | Create an employee |
+| PUT | `/api/employees/{emp_id}` | Update an employee |
+| DELETE | `/api/employees/{emp_id}` | Delete an employee |
+| GET | `/api/attendance` | Retrieve attendance records |
+| POST | `/api/attendance` | Create an attendance record |
+| PUT | `/api/attendance/{record_id}` | Update an attendance record |
+| DELETE | `/api/attendance/{record_id}` | Delete an attendance record |
+| POST | `/api/reset` | Reset attendance data |
+| DELETE | `/api/reset` | Reset attendance data |
+ 
+### Analytics APIs
+ 
+| Method | Endpoint | Purpose |
+|---|---|---|
+| GET | `/api/analytics/filters` | Retrieve analytics filters |
+| GET | `/api/analytics/attendance-graph` | Retrieve attendance graph data |
+| GET | `/api/analytics/daily-records` | Retrieve filtered daily records |
+| GET | `/api/analytics/working-hours` | Retrieve working-hours analytics |
+ 
+### ODC Tracker APIs
+ 
+| Method | Endpoint | Purpose |
+|---|---|---|
+| POST | `/api/odc/upload` | Upload ODC workbook |
+| GET | `/api/odc/summary` | Retrieve ODC summary |
+| GET | `/api/odc/logs` | Retrieve ODC logs |
+| GET | `/api/odc/uploads` | Retrieve ODC upload history |
+| PUT | `/api/odc/employees/{emp_id}/remarks` | Update ODC employee remarks |
+ 
+**Note:** Confirm the exact endpoint paths, HTTP methods, and parameters in the running API documentation at http://localhost:8000/docs. The table summarizes the project's intended API functions.
+ 
+## Database
+ 
+The application uses SQLite for local data storage.
+ 
+Important backend files:
+ 
+- `database.py` — database connection and configuration.
+- `models.py` — database models.
+- `schemas.py` — request and response schemas.
+- `excel_processor.py` — attendance Excel processing.
+- `analytics.py` — attendance and working-hours analytics.
+- `odc_tracker.py` — ODC Tracker functionality.
+- `main.py` — FastAPI application and route configuration.
+ 
+Back up your database before resetting data or changing database schemas.
