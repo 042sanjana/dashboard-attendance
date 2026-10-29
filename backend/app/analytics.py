@@ -7,12 +7,20 @@ Analytics endpoints (READ-ONLY - nothing here writes to the database).
   GET /api/analytics/working-hours     -> daily / monthly / yearly hours summaries
 
 All endpoints accept the same filters: emp_id, status (comma separated),
-year / month, so the frontend can combine them freely.
+year / month and timing (comma separated), so the frontend can combine them freely.
+
+  timing = complete | both_missing | either_missing | invalid
 
 Working-hours rule (nothing is invented):
-  hours = check_out - check_in, ONLY when both exist and check_out > check_in.
+  hours = check_out - check_in, ONLY when both exist and 0 < result < 24h.
+  If the record also has `check_in_date` / `check_out_date` attributes (not in the
+  database today), overnight shifts are computed from the full date-times.
+  With times only, a check-out that is not after the check-in is "invalid_order".
   Otherwise the record is excluded from hour totals and flagged:
-     no_timings | missing_check_in | missing_check_out | invalid_order
+     no_timings | missing_check_in | missing_check_out | invalid_order | over_24h
+
+Colour categories (same names are used by the React code):
+  complete (green) | both_missing (red) | either_missing (orange) | invalid (purple)
 """
 import calendar
 from collections import Counter, defaultdict
@@ -32,13 +40,33 @@ router = APIRouter(prefix="/api/analytics", tags=["analytics"])
 MONTH_LABELS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun",
                 "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
 
+SECONDS_PER_DAY = 86400
+
 TIMING_NOTES = {
     "ok": None,
     "no_timings": "No check-in / check-out recorded",
     "missing_check_in": "Check-in missing",
     "missing_check_out": "Check-out missing",
     "invalid_order": "Check-out is not after check-in",
+    "over_24h": "Shift is 24 hours or longer (invalid)",
 }
+
+# flag -> colour category
+TIMING_CATEGORY = {
+    "ok": "complete",
+    "no_timings": "both_missing",
+    "missing_check_in": "either_missing",
+    "missing_check_out": "either_missing",
+    "invalid_order": "invalid",
+    "over_24h": "invalid",
+}
+TIMING_COLORS = {
+    "complete": "green",
+    "both_missing": "red",
+    "either_missing": "orange",
+    "invalid": "purple",
+}
+TIMING_CATEGORIES = tuple(TIMING_COLORS.keys())
 
 
 # ---------------------------------------------------------------------------
@@ -74,6 +102,8 @@ class DailyRecord(BaseModel):
     worked_display: Optional[str] = None      # e.g. "8h 15m"
     timing_flag: str                          # ok | no_timings | ...
     timing_note: Optional[str] = None
+    timing_category: str = "complete"         # complete | both_missing | either_missing | invalid
+    timing_color: str = "green"               # green | red | orange | purple
 
 
 class TimingSummary(BaseModel):
@@ -82,6 +112,9 @@ class TimingSummary(BaseModel):
     total_hours: Optional[float] = None
     avg_hours_per_day: Optional[float] = None
     excluded_breakdown: Dict[str, int] = {}
+    # Records per colour category for every filter EXCEPT `timing`, so the
+    # clickable cards always show accurate numbers.
+    flag_counts: Dict[str, int] = {}
 
 
 class RecordsResponse(BaseModel):
@@ -131,21 +164,49 @@ def _to_seconds(t: time_cls) -> int:
     return t.hour * 3600 + t.minute * 60 + t.second
 
 
-def compute_hours(check_in: Optional[time_cls], check_out: Optional[time_cls]) -> Tuple[Optional[int], str]:
-    """Return (worked_seconds or None, flag). Never guesses missing values."""
+def compute_hours(
+    check_in: Optional[time_cls],
+    check_out: Optional[time_cls],
+    check_in_date: Optional[date_cls] = None,
+    check_out_date: Optional[date_cls] = None,
+) -> Tuple[Optional[int], str]:
+    """Return (worked_seconds or None, flag). Never guesses missing values.
+
+    Overnight shifts are resolved only when BOTH dates are available.
+    """
     if check_in is None and check_out is None:
         return None, "no_timings"
     if check_in is None:
         return None, "missing_check_in"
     if check_out is None:
         return None, "missing_check_out"
+
     diff = _to_seconds(check_out) - _to_seconds(check_in)
+    if check_in_date is not None and check_out_date is not None:
+        diff += (check_out_date - check_in_date).days * SECONDS_PER_DAY
+
     if diff <= 0:
         return None, "invalid_order"
+    if diff >= SECONDS_PER_DAY:
+        return None, "over_24h"
     return diff, "ok"
 
 
-def _hours(seconds: Optional[int]) -> Optional[float]:
+def _timing_of(rec) -> Tuple[Optional[int], str]:
+    """Timing for an Attendance row. Uses optional date attributes if they exist."""
+    return compute_hours(
+        rec.check_in,
+        rec.check_out,
+        getattr(rec, "check_in_date", None),
+        getattr(rec, "check_out_date", None),
+    )
+
+
+def _category_of(rec) -> str:
+    return TIMING_CATEGORY[_timing_of(rec)[1]]
+
+
+def _hours(seconds: Optional[float]) -> Optional[float]:
     return None if seconds is None else round(seconds / 3600, 2)
 
 
@@ -180,6 +241,22 @@ def _parse_statuses(raw: Optional[str]) -> Optional[List[str]]:
             detail=f"Invalid status {bad}. Allowed: {', '.join(schemas.ALLOWED_STATUSES)}",
         )
     return resolved
+
+
+def _parse_timing(raw: Optional[str]) -> Optional[List[str]]:
+    """'invalid,either_missing' -> list. Empty / 'all' -> None (no filter)."""
+    if not raw:
+        return None
+    items = [s.strip().lower() for s in raw.split(",") if s.strip()]
+    if not items or "all" in items:
+        return None
+    bad = [s for s in items if s not in TIMING_CATEGORIES]
+    if bad:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Invalid timing {bad}. Allowed: {', '.join(TIMING_CATEGORIES)}",
+        )
+    return items
 
 
 def _resolve_employee(db: Session, emp_id: Optional[str]) -> Optional[str]:
@@ -248,6 +325,7 @@ def get_filters(db: Session = Depends(get_db)):
         "months_by_year": months_by_year,
         "latest_date": latest.isoformat() if latest else None,
         "statuses": list(schemas.ALLOWED_STATUSES),
+        "timing_categories": [{"key": k, "color": TIMING_COLORS[k]} for k in TIMING_CATEGORIES],
         "employees": [{"emp_id": e.emp_id, "name": e.name} for e in employees],
     }
 
@@ -262,9 +340,11 @@ def attendance_graph(
     month: Optional[int] = Query(None, ge=1, le=12),
     emp_id: Optional[str] = None,
     status: Optional[str] = Query(None, description="Comma separated, e.g. Present,WFH"),
+    timing: Optional[str] = Query(None, description="complete,both_missing,either_missing,invalid"),
     db: Session = Depends(get_db),
 ):
     statuses = _parse_statuses(status)
+    timings = _parse_timing(timing)
     series = statuses or list(schemas.ALLOWED_STATUSES)
     emp = _resolve_employee(db, emp_id)
     year, month = _resolve_year_month(db, year, month, need_month=(view == "monthly"))
@@ -283,10 +363,13 @@ def attendance_graph(
         month = None
 
     A = models.Attendance
-    rows = _apply_filters(db.query(A.date, A.status), start, end, emp, statuses).all()
+    rows = _apply_filters(db.query(A), start, end, emp, statuses).all()
 
     counts = {key: {s: 0 for s in series} for key, _ in skeleton}
-    for d, st in rows:
+    for rec in rows:
+        if timings and _category_of(rec) not in timings:
+            continue
+        d, st = rec.date, rec.status
         key = d.isoformat() if view == "monthly" else f"{d.year}-{d.month:02d}"
         if key in counts and st in counts[key]:
             counts[key][st] += 1
@@ -308,11 +391,14 @@ def daily_records(
     target_date: Optional[str] = Query(None, alias="date", description="YYYY-MM-DD (single day)"),
     emp_id: Optional[str] = None,
     status: Optional[str] = None,
+    timing: Optional[str] = Query(
+        None, description="Comma separated: complete,both_missing,either_missing,invalid"),
     limit: int = Query(500, ge=1, le=2000),
     offset: int = Query(0, ge=0),
     db: Session = Depends(get_db),
 ):
     statuses = _parse_statuses(status)
+    timings = _parse_timing(timing)
     emp = _resolve_employee(db, emp_id)
 
     if target_date:
@@ -321,22 +407,33 @@ def daily_records(
         except ValueError:
             raise HTTPException(status_code=400, detail="date must be YYYY-MM-DD")
     else:
-        if year is None:   # nothing given -> latest month with data
-            year, month = _resolve_year_month(db, None, None, need_month=True)
+        if year is None:   # no year -> latest year; keep a month the caller chose
+            year, month = _resolve_year_month(db, None, month, need_month=(month is None))
         if year is None:   # empty database
-            return RecordsResponse(total=0, limit=limit, offset=offset,
-                                   summary=TimingSummary(valid_records=0, excluded_records=0),
-                                   records=[])
+            return RecordsResponse(
+                total=0, limit=limit, offset=offset,
+                summary=TimingSummary(valid_records=0, excluded_records=0,
+                                      flag_counts={c: 0 for c in TIMING_CATEGORIES}),
+                records=[])
         start, end = _month_range(year, month) if month else _year_range(year)
 
     A, E = models.Attendance, models.Employee
     q = db.query(A, E.name).join(E, E.emp_id == A.emp_id)
     rows = _apply_filters(q, start, end, emp, statuses).order_by(A.date.desc(), E.name.asc()).all()
 
+    # Evaluate timing once per row; count categories over ALL rows (for the cards)
+    flag_counts = {c: 0 for c in TIMING_CATEGORIES}
+    evaluated = []
+    for rec, name in rows:
+        secs, flag = _timing_of(rec)
+        category = TIMING_CATEGORY[flag]
+        flag_counts[category] += 1
+        if not timings or category in timings:
+            evaluated.append((rec, name, secs, flag, category))
+
     total_secs, valid, excluded = 0, 0, Counter()
     page: List[DailyRecord] = []
-    for i, (rec, name) in enumerate(rows):
-        secs, flag = compute_hours(rec.check_in, rec.check_out)
+    for i, (rec, name, secs, flag, category) in enumerate(evaluated):
         if secs is None:
             excluded[flag] += 1
         else:
@@ -349,6 +446,7 @@ def daily_records(
                 check_out=_fmt_time(rec.check_out), worked_hours=_hours(secs),
                 worked_display=_display(secs), timing_flag=flag,
                 timing_note=TIMING_NOTES[flag],
+                timing_category=category, timing_color=TIMING_COLORS[category],
             ))
 
     summary = TimingSummary(
@@ -357,8 +455,9 @@ def daily_records(
         total_hours=_hours(total_secs) if valid else None,
         avg_hours_per_day=_hours(total_secs / valid) if valid else None,
         excluded_breakdown=dict(excluded),
+        flag_counts=flag_counts,
     )
-    return RecordsResponse(total=len(rows), limit=limit, offset=offset,
+    return RecordsResponse(total=len(evaluated), limit=limit, offset=offset,
                            period_start=start.isoformat(), period_end=end.isoformat(),
                            summary=summary, records=page)
 
@@ -377,9 +476,11 @@ def working_hours(
     month: Optional[int] = Query(None, ge=1, le=12),
     emp_id: Optional[str] = None,
     status: Optional[str] = None,
+    timing: Optional[str] = Query(None, description="complete,both_missing,either_missing,invalid"),
     db: Session = Depends(get_db),
 ):
     statuses = _parse_statuses(status)
+    timings = _parse_timing(timing)
     emp = _resolve_employee(db, emp_id)
     used_statuses = statuses or list(schemas.ALLOWED_STATUSES)
 
@@ -408,6 +509,8 @@ def working_hours(
     A, E = models.Attendance, models.Employee
     q = db.query(A, E.name).join(E, E.emp_id == A.emp_id)
     rows = _apply_filters(q, start, end, emp, statuses).all()
+    if timings:
+        rows = [(rec, name) for rec, name in rows if _category_of(rec) in timings]
 
     def bucket_key(d: date_cls) -> str:
         if period == "daily":
@@ -422,7 +525,7 @@ def working_hours(
     total_secs = valid_total = 0
 
     for rec, name in rows:
-        secs, flag = compute_hours(rec.check_in, rec.check_out)
+        secs, flag = _timing_of(rec)
         b = buckets[bucket_key(rec.date)]
         e = per_emp.setdefault(rec.emp_id, {"name": name, "secs": 0, "valid": 0, "excluded": 0})
         if secs is None:

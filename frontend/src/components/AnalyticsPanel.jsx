@@ -16,6 +16,7 @@ import {
   getWorkingHours,
   getDailyRecords,
 } from '../api.js'
+import { TIMING_ORDER, TIMING_META } from '../timing.js'
 
 const MONTHS = [
   'January', 'February', 'March', 'April', 'May', 'June',
@@ -38,6 +39,7 @@ const FLAG_LABELS = {
   missing_check_in: 'missing check-in',
   missing_check_out: 'missing check-out',
   invalid_order: 'check-out not after check-in',
+  over_24h: '24h+ shift',
 }
 
 const AXIS = { fontSize: 12, fill: '#64748b' }
@@ -97,6 +99,7 @@ export default function AnalyticsPanel({ refreshKey }) {
   const [filters, setFilters] = useState(null)
   const [empId, setEmpId] = useState('all')
   const [statuses, setStatuses] = useState([]) // empty = all statuses
+  const [timing, setTiming] = useState(null) // null = all timing categories
   const [year, setYear] = useState(null)
   const [month, setMonth] = useState(null)
   const [graphView, setGraphView] = useState('monthly') // monthly | yearly
@@ -148,6 +151,7 @@ export default function AnalyticsPanel({ refreshKey }) {
     const common = {
       emp_id: empId === 'all' ? undefined : empId,
       status: statuses.length ? statuses.join(',') : undefined,
+      timing: timing || undefined,
     }
     Promise.all([
       getAttendanceGraph({ ...common, view: graphView, year, month }),
@@ -165,7 +169,7 @@ export default function AnalyticsPanel({ refreshKey }) {
       })
       .finally(() => { if (!cancelled) setLoading(false) })
     return () => { cancelled = true }
-  }, [filters, empId, statuses, year, month, graphView, hoursPeriod])
+  }, [filters, empId, statuses, timing, year, month, graphView, hoursPeriod])
 
   const graphData = useMemo(
     () => (graph?.points || []).map((p) => ({ label: p.label, ...p.counts })),
@@ -222,6 +226,19 @@ export default function AnalyticsPanel({ refreshKey }) {
     : ''
   const hasHoursData = hoursData.some((p) => p.value !== null && p.value !== undefined)
 
+  // Timing cards: counts come from the backend (all filters except timing).
+  const flagCounts = records?.summary?.flag_counts || {}
+  const allCount = TIMING_ORDER.reduce((sum, k) => sum + (flagCounts[k] || 0), 0)
+  const timingCards = [
+    { key: null, label: 'All records', hint: 'Every record for these filters', count: allCount },
+    ...TIMING_ORDER.map((k) => ({
+      key: k,
+      label: TIMING_META[k].label,
+      hint: TIMING_META[k].hint,
+      count: flagCounts[k] || 0,
+    })),
+  ]
+
   return (
     <section className={`an-section ${loading ? 'is-loading' : ''}`} id="analytics-section">
       <div className="an-header">
@@ -229,6 +246,7 @@ export default function AnalyticsPanel({ refreshKey }) {
         <p>
           {empName}
           {statuses.length ? ` · ${statuses.join(', ')}` : ' · all statuses'}
+          {timing ? ` · ${TIMING_META[timing].label}` : ' · all timings'}
         </p>
       </div>
 
@@ -257,6 +275,19 @@ export default function AnalyticsPanel({ refreshKey }) {
             <label>Month</label>
             <select className="form-input" value={month ?? ''} onChange={(e) => setMonth(Number(e.target.value))}>
               {MONTHS.map((m, i) => <option key={m} value={i + 1}>{m}</option>)}
+            </select>
+          </div>
+          <div className="an-field">
+            <label>Timing</label>
+            <select
+              className="form-input"
+              value={timing ?? ''}
+              onChange={(e) => setTiming(e.target.value || null)}
+            >
+              <option value="">All timings</option>
+              {TIMING_ORDER.map((k) => (
+                <option key={k} value={k}>{TIMING_META[k].label}</option>
+              ))}
             </select>
           </div>
           <div className="an-field">
@@ -306,6 +337,27 @@ export default function AnalyticsPanel({ refreshKey }) {
             )
           })}
         </div>
+      </div>
+
+      {/* ---------------- Clickable check-in / check-out cards ---------------- */}
+      <div className="an-tcards">
+        {timingCards.map((c) => {
+          const active = (timing || null) === c.key
+          return (
+            <button
+              key={c.key || 'all'}
+              type="button"
+              className={`an-tcard tc-${c.key || 'all'}${active ? ' active' : ''}`}
+              aria-pressed={active}
+              title={c.hint}
+              onClick={() => setTiming(active ? null : c.key)}
+            >
+              <span className="an-tcard-value">{records ? c.count : '—'}</span>
+              <span className="an-tcard-label">{c.label}</span>
+              <span className="an-tcard-hint">{c.hint}</span>
+            </button>
+          )
+        })}
       </div>
 
       {/* ---------------- Hours summary cards ---------------- */}
@@ -469,26 +521,29 @@ export default function AnalyticsPanel({ refreshKey }) {
               ) : records.records.length === 0 ? (
                 <tr><td colSpan={7} className="empty-row">No records match these filters.</td></tr>
               ) : (
-                records.records.map((r) => (
-                  <tr key={r.id}>
-                    <td>{r.date}</td>
-                    <td className="emp-name-cell">
-                      {r.name} <span className="mono">{r.emp_id}</span>
-                    </td>
-                    <td><StatusPill status={r.status} /></td>
-                    <td>{r.check_in || '—'}</td>
-                    <td>{r.check_out || '—'}</td>
-                    <td><strong>{r.worked_display || '—'}</strong></td>
-                    <td>
-                      {r.timing_note && (
-                        <span className={`an-flag ${r.timing_flag === 'no_timings' ? 'muted' : 'warn'}`}>
-                          {r.timing_flag !== 'no_timings' && <AlertTriangle size={13} />}
-                          {r.timing_note}
-                        </span>
-                      )}
-                    </td>
-                  </tr>
-                ))
+                records.records.map((r) => {
+                  const cat = r.timing_category || 'complete'
+                  return (
+                    <tr key={r.id}>
+                      <td>{r.date}</td>
+                      <td className="emp-name-cell">
+                        {r.name} <span className="mono">{r.emp_id}</span>
+                      </td>
+                      <td><StatusPill status={r.status} /></td>
+                      <td className={`tm-cell tm-${cat}`}>{r.check_in || '—'}</td>
+                      <td className={`tm-cell tm-${cat}`}>{r.check_out || '—'}</td>
+                      <td><strong>{r.worked_display || '—'}</strong></td>
+                      <td>
+                        {r.timing_note && (
+                          <span className={`an-flag tm-text tm-${cat}`}>
+                            {r.timing_flag !== 'no_timings' && <AlertTriangle size={13} />}
+                            {r.timing_note}
+                          </span>
+                        )}
+                      </td>
+                    </tr>
+                  )
+                })
               )}
             </tbody>
           </table>
