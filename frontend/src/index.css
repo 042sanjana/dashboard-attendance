@@ -495,7 +495,9 @@ body {
 .badge-sick-leave { background: #fff1f2; color: #e11d48; }
 .badge-public-holiday { background:#e0f2fe; color: #0369a1; }
 .badge-weekly-holiday { background: #f3f4f6; color: #4b5563; }  
-
+.badge-earned-leave { background: #f3e8ff; color: #9333ea; }
+.badge-compensatory-off { background: #ccfbf1; color: #0d9488; }
+.badge-optional-holiday { background: #fef9c3; color: #a16207; }
 /* ---------------- Employee Detail ---------------- */
 .employee-detail { display: flex; flex-direction: column; gap: 20px; }
 
@@ -863,3 +865,4 @@ body {
 
 @media (max-width: 1200px) { .an-tcards { grid-template-columns: repeat(3, 1fr); } }
 @media (max-width: 520px)  { .an-tcards { grid-template-columns: 1fr 1fr; } }
+

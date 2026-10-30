@@ -32,6 +32,9 @@ const STATUS_COLORS = {
   'Sick leave': '#db2777',
   'Public Holiday': '#2563eb',
   'Weekly Holiday': '#64748b',
+  'Earned Leave': '#9333ea',
+  'Compensatory Leave': '#0d9488',
+  'Optional Holiday': '#ca8a04',
 }
 
 const FLAG_LABELS = {

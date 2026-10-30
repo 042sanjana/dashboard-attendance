@@ -286,11 +286,8 @@ def _status_counts(
     query = query.group_by(models.Attendance.status)
 
     counts = {
-        "Present": 0,
-        "Absent": 0,
-        "WFH": 0,
-        "Leave": 0,
-        "Half Day": 0,
+        status:0
+        for status in schemas.ALLOWED_STATUSES
     }
 
     for status, count in query.all():
@@ -408,6 +405,12 @@ def get_chart_data(
             "wfh": 0,
             "leave": 0,
             "half_day": 0,
+            "sick_leave": 0,
+            "public_holiday": 0,
+            "weekly_holiday": 0,
+            "earned_leave": 0,
+            "compensatory_leave": 0,
+            "optional_holiday": 0,
         }
 
         current += timedelta(days=1)
@@ -418,6 +421,12 @@ def get_chart_data(
         "WFH": "wfh",
         "Leave": "leave",
         "Half Day": "half_day",
+        "Sick leave": "sick_leave",
+        "Public Holiday": "public_holiday",
+        "Weekly Holiday": "weekly_holiday",
+        "Earned Leave": "earned_leave",
+        "Compensatory Leave": "compensatory_leave",
+        "Optional Holiday": "optional_holiday",
     }
 
     for record_date, status, count in rows:

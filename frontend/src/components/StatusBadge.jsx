@@ -9,6 +9,9 @@ const STATUS_CLASS = {
   'Sick leave': 'badge-sick-leave',
   'Public Holiday': 'badge-public-holiday',
   'Weekly Holiday': 'badge-weekly-holiday',
+  'Earned Leave': 'badge-earned-leave',
+  'Compensatory Leave': 'badge-compensatory-leave',
+  'Optional Holiday': 'badge-optional-holiday',
 }
 
 export default function StatusBadge({ status }) {

@@ -16,6 +16,12 @@ const COLORS = {
   wfh: '#7c3aed',
   leave: '#d97706',
   half_day: '#0891b2',
+  sick_leave:'#db2777',
+  public_holiday:'#2563eb',
+  weekly_holiday:'#64748b',
+  earned_leave:'#9333ea',
+  compensatory_leave:'#0d9488',
+  optional_holiday:'#ca8a04',
 }
 
 const LABELS = {
@@ -24,6 +30,12 @@ const LABELS = {
   wfh: 'WFH',
   leave: 'Leave',
   half_day: 'Half Day',
+  sick_leave:'Sick Leave',
+  public_holiday:'Public Holiday',
+  weekly_holiday:'Weekly Holiday',
+  earned_leave:'Earned Leave',
+  compensatory_leave:'Compensatory Leave',
+  optional_holiday:'Optional Holiday',
 }
 
 function formatDate(iso) {
