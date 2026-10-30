@@ -29,7 +29,7 @@ const STATUS_COLORS = {
   WFH: '#7c3aed',
   Leave: '#d97706',
   'Half Day': '#0891b2',
-  'Sick leave': '#db2777',
+  'Casual/Sick leave': '#e11d48',
   'Public Holiday': '#2563eb',
   'Weekly Holiday': '#64748b',
   'Earned Leave': '#9333ea',

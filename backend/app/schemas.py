@@ -50,7 +50,7 @@ class SummaryOut(BaseModel):
     date: Optional[str] = None
 
 
-ALLOWED_STATUSES = ("Present", "Absent", "WFH", "Leave", "Half Day","Sick leave", "Public Holiday", "Weekly Holiday","Earned Leave", "Compensatory Leave", "Optional Holiday")
+ALLOWED_STATUSES = ("Present", "Absent", "WFH", "Leave", "Half Day","Casual/Sick Leave", "Public Holiday", "Weekly Holiday","Earned Leave", "Compensatory Leave", "Optional Holiday")
 
 
 class EmployeeCreate(BaseModel):
@@ -104,3 +104,10 @@ class ChartPoint(BaseModel):
     wfh: int
     leave: int
     half_day: int
+    casual_sick_leave: int
+    public_holiday: int
+    weekly_holiday: int
+    optional_holiday: int
+    earned_leave: int
+    Compensatory_leave: int
+    

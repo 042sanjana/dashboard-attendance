@@ -48,8 +48,12 @@ VALID_STATUSES = {
     "halfday": "Half Day",
     "hd": "Half Day",
 
-    "sickleave": "Sick Leave",
-    "sick": "Sick Leave",
+ 
+   
+    
+    "casualsickleave": "Casual/Sick Leave",
+    "casualleave": "Casual/Sick Leave",
+    "casualsick": "Casual/Sick Leave",
 
     "publicholiday": "Public Holiday",
     "public": "Public Holiday",
@@ -61,8 +65,9 @@ VALID_STATUSES = {
     "earnedleave": "Earned Leave",
     "el": "Earned Leave",
 
-    "compensatoryoff": "Compensatory Off",
-    "compoff": "Compensatory Off",
+    "compensatoryoff": "Compensatory Leave",
+    "compoff": "Compensatory Leave",
+    "compensatoryleave": "Compensatory Leave",
 
     "optionalholiday": "Optional Holiday",
 }
