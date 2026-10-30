@@ -151,6 +151,7 @@ Open a terminal in the project root and run:
 cd backend
 python -m venv venv
 .\venv\Scripts\Activate.ps1
+venv\Scripts\activate
 pip install -r requirements.txt
 python -m uvicorn app.main:app --reload --port 8000
 ```
